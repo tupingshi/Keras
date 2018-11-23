@@ -1,0 +1,101 @@
+#定义一个offline learning Stateful LSTM网格搜索算法 - LSTM网络具有内存，能够记住长序列
+def offline_learning_for_stateful_LSTM(reframed, x_for_final_predict):
+    parameter_LSTM = []
+    accuracy_LSTM = []
+    batch_size = 1
+    look_back = 1
+    for a in ['relu','tanh','linear']:
+        for b in ['sgd','adam','rmsprop']:
+            #store the paramter
+            parameter_LSTM = parameter_LSTM+[a,b]
+            #划分训练数据和测试数据
+            train = np.array(reframed.iloc[:-1, :])
+            test = np.array(reframed.iloc[-1:, :])
+            #拆分输入输出，测试集为t-1期的数据
+            train_x, train_y = train[:, :-1], train[:, -1]
+            test_x, test_y = test[:, :-1], test[:, -1]
+            #reshape输入为LSTM的输入格式
+            train_x = train_x.reshape((train_x.shape[0], 1, train_x.shape[1]))
+            test_x = test_x.reshape((test_x.shape[0], 1, test_x.shape[1]))
+            #定义模型
+            model = Sequential()
+            model.add(LSTM(4, batch_input_shape = (batch_size, look_back, train_x.shape[2]), stateful=True, return_sequences=True))
+            model.add(LSTM(4, batch_input_shape = (batch_size, look_back, train_x.shape[2]), stateful=True))
+            model.add(Dense(1))
+            model.add(Activation(a))
+            model.compile(loss = 'mean_squared_error', optimizer = b)
+            #训练模型
+            for i in range(20):
+                model.fit(train_x, train_y, epochs = 1, batch_size = batch_size, validation_data = (test_x, test_y), verbose = 0, shuffle = False)
+                model.reset_states() #重置网络状态
+            #预测
+            yhat = model.predict(test_x)
+            test_x = test_x.reshape(test_x.shape[0], test_x.shape[2])
+            #预测数据逆缩放
+            inv_yhat = np.concatenate((yhat, test_x[:, 1:]), axis=1)       
+            inv_yhat = scaler.inverse_transform(inv_yhat)
+            inv_yhat = inv_yhat[:, 0]
+            #真实数据逆缩放
+            test_y = test_y.reshape(len(test_y), 1)
+            inv_y = np.concatenate((test_y, test_x[:, 1:]), axis=1)
+            inv_y = scaler.inverse_transform(inv_y)
+            inv_y = inv_y[:, 0]
+            accuracy = abs(test_y-yhat)[0,0]
+            accuracy_LSTM = accuracy_LSTM+[accuracy]
+    #定位精确度最高的一组参数         
+    q = int(np.array(np.where(accuracy_LSTM == min(accuracy_LSTM)))[0])
+    best_parameter = parameter_LSTM[(q+1)*2-1-1:(q+1)*2]
+    #划分训练数据和测试数据
+    train = np.array(reframed)
+    #拆分输入输出，测试集为t-1期的数据
+    train_x, train_y = train[:, :-1], train[:, -1]
+    #reshape输入为LSTM的输入格式
+    train_x = train_x.reshape((train_x.shape[0], 1, train_x.shape[1]))
+    #定义模型
+    model = Sequential()
+    model.add(LSTM(4, batch_input_shape = (batch_size, look_back, train_x.shape[2]), stateful = True, return_sequences = True))
+    model.add(LSTM(4, batch_input_shape = (batch_size, look_back, train_x.shape[2]), stateful = True))
+    model.add(Dense(1))
+    model.add(Activation(best_parameter[0]))
+    model.compile(loss = 'mean_squared_error', optimizer = best_parameter[1])
+    #训练模型
+    for i in range(20):
+        model.fit(train_x, train_y, epochs = 1, batch_size = batch_size, verbose = 0, shuffle = False)
+        model.reset_states()
+    #predict
+    y_final_predict = model.predict(x_for_final_predict.reshape(1,1,4))
+    #预测数据逆缩放
+    inv_yhat = np.concatenate((y_final_predict, x_for_final_predict[:,1:]), axis = 1)       
+    inv_yhat = scaler.inverse_transform(inv_yhat)
+    #储存预测的return
+    y_predicted=inv_yhat[:,0]
+    #保存训练过的模型，以特定的名字
+    model.save(name_of_model[col])
+    del model
+    return y_predicted
+
+#定义一个online learning Stateful LSTM，仅是re-fit，而不是re-train
+def online_learning_for_stateful_LSTM(reframed, x_for_final_predict):
+    #训练数据即为全集数据
+    train = np.array(reframed)
+    #拆分输入输出，测试集为t-1期的数据
+    train_x, train_y = train[:, :-1], train[:, -1]
+    #reshape输入为LSTM的输入格式
+    train_x = train_x.reshape((train_x.shape[0], 1, train_x.shape[1]))
+    #load之前保存过的模型
+    model = load_model(name_of_model[col])
+    #训练模型
+    for i in range(20):
+        model.fit(train_x, train_y, epochs = 1, batch_size = batch_size, verbose = 0, shuffle = False)
+        model.reset_states()
+    #predict
+    y_final_predict = name[name_of_model[col]].predict(x_for_final_predict.reshape(1,1,4))
+    #预测数据逆缩放
+    inv_yhat = np.concatenate((y_final_predict, x_for_final_predict[:,1:]), axis = 1)       
+    inv_yhat = scaler.inverse_transform(inv_yhat)
+    #储存预测的return
+    y_predicted=inv_yhat[:,0]
+    #再次储存更新后的模型
+    model.save(name_of_model[col])
+    del model
+    return y_predicted
